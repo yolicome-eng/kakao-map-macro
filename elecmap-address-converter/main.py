@@ -12,11 +12,11 @@ from selenium.webdriver.support import expected_conditions as EC
 URL="https://elecmap.kr/search/single"
 
 def norm(v):
-    return re.sub(r"\\s+"," ",str(v or "")).strip()
+    return re.sub(r"\s+"," ",str(v or "")).strip()
 
 def looks_like_address(s):
     s=norm(s)
-    return bool(re.search(r"(특별시|광역시|특별자치시|특별자치도|도)\\s+.+(시|군|구|읍|면|동|리)",s) or re.search(r"\\b\\d{1,5}-\\d{1,5}\\b",s))
+    return bool(re.search(r"(특별시|광역시|특별자치시|특별자치도|도)\s+.+(시|군|구|읍|면|동|리)",s) or re.search(r"\b\d{1,5}-\d{1,5}\b",s))
 
 def collect_strings(obj, found):
     if isinstance(obj, dict):
@@ -84,7 +84,7 @@ def run():
         driver.get(URL); time.sleep(2)
         for r in range(1,ws.max_row+1):
             code=norm(ws.cell(r,1).value).upper()
-            if not re.fullmatch(r"\\d{4}[A-Z]\\d{3}",code): continue
+            if not re.fullmatch(r"\d{4}[A-Z]\d{3}",code): continue
             try:
                 inp=find_input(driver)
                 if not inp: raise RuntimeError("전산화번호 입력칸을 찾지 못했습니다.")
