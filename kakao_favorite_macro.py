@@ -109,15 +109,14 @@ SEARCH_AND_SELECT_JS = r'''(async function(q){
  const btn=document.querySelector('#search\\.keyword\\.submit');
  if(btn) btn.click();
  else input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
- await sleep(1200);
+ const deadline=Date.now()+6000;
  let items=[];
- for(let i=0;i<25;i++){
+ while(Date.now()<deadline){
    items=[...document.querySelectorAll('.AddressItem')];
    if(!items.length) items=[...document.querySelectorAll('#info\\.search\\.place\\.list .AddressItem')];
    if(items.length) break;
-   await sleep(300);
+   await sleep(150);
  }
- if(!items.length) return {ok:false,error:'주소 검색 결과가 없습니다.'};
  const nq=norm(q); let best=null,bestScore=-1;
  items.forEach((el,i)=>{
    const txt=clean(el.innerText||''), n=norm(txt); let score=0;
@@ -134,11 +133,11 @@ SEARCH_AND_SELECT_JS = r'''(async function(q){
 
 CLICK_FAVORITE_JS = r'''(async function(){
  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
- for(let i=0;i<30;i++){
+ for(let i=0;i<15;i++){
    const toolbar=document.querySelector('.InfoWindowToolbar');
    const fav=toolbar?toolbar.querySelector('.fav'):document.querySelector('.InfoWindowToolbar .fav');
-   if(fav){fav.scrollIntoView({block:'center'});fav.click();await sleep(700);return {ok:true};}
-   await sleep(300);
+   if(fav){fav.scrollIntoView({block:'center'});fav.click();await sleep(250);return {ok:true};}
+   await sleep(150);
  }
  return {ok:false,error:'검색한 주소의 즐겨찾기 버튼을 찾지 못했습니다.'};
 })()'''
@@ -146,23 +145,23 @@ CLICK_FAVORITE_JS = r'''(async function(){
 SELECT_GROUP_JS = r'''(async function(group){
  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
  const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
- for(let i=0;i<30;i++){
+ for(let i=0;i<15;i++){
    const body=clean(document.body.innerText||'');
    if(body.includes('이미 등록된 주소')) return {ok:true,duplicate:true};
    const strongs=[...document.querySelectorAll('strong.txt_folder')];
    const target=strongs.find(el=>clean(el.innerText)===clean(group));
-   if(target){const a=target.closest('a')||target.parentElement;if(a){a.scrollIntoView({block:'center'});a.click();await sleep(500);return {ok:true};}}
+   if(target){const a=target.closest('a')||target.parentElement;if(a){a.scrollIntoView({block:'center'});a.click();await sleep(250);return {ok:true};}}
    const folders=[...document.querySelectorAll('.list_folder')];
    const textTarget=folders.find(el=>clean(el.innerText).includes(clean(group)));
-   if(textTarget){textTarget.click();await sleep(500);return {ok:true};}
-   await sleep(300);
+   if(textTarget){textTarget.click();await sleep(250);return {ok:true};}
+   await sleep(150);
  }
  return {ok:false,error:'선택한 즐겨찾기 그룹을 찾지 못했습니다.'};
 })(__GROUP__)'''
 
 SAVE_FAVORITE_JS = r'''(async function(name){
  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
- for(let i=0;i<25;i++){
+ for(let i=0;i<15;i++){
    const input=document.querySelector('#display1');
    if(input){
      const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;
@@ -170,9 +169,9 @@ SAVE_FAVORITE_JS = r'''(async function(name){
      input.dispatchEvent(new Event('input',{bubbles:true}));
      input.dispatchEvent(new Event('change',{bubbles:true}));
      const ok=[...document.querySelectorAll('button')].find(b=>b.getAttribute('data-id')==='addOK'&&b.classList.contains('btn_submit'));
-     if(ok){ok.click();await sleep(700);return {ok:true};}
+     if(ok){ok.click();await sleep(250);return {ok:true};}
    }
-   await sleep(300);
+   await sleep(150);
  }
  return {ok:false,error:'즐겨찾기 저장 창을 찾지 못했습니다.'};
 })(__NAME__)'''
@@ -259,25 +258,35 @@ class App:
         ew.append(['순번','선로명','선로번호','전산화번호','주소','오류'])
         group_name=self.combo.get().split(' [ID ')[0].strip()
 
+        # 작업 시작 시 지도 페이지를 한 번만 준비합니다. 매 행마다 새로고침하지 않습니다.
+        try:
+            self.c.nav(MAP)
+            ready=self.c.js("!!document.querySelector('#search\\.keyword\\.query')",10)
+            if not ready: raise RuntimeError("카카오맵 검색창을 준비하지 못했습니다.")
+        except Exception as e:
+            self.running=False
+            self.status.set("시작 실패")
+            self.msg("작업 시작 실패: "+str(e))
+            return
+
         for n,row in enumerate(self.rows,1):
             if self.stopflag: break
             self.pb.config(value=n/total*100)
             self.status.set(f'{n}/{total} 처리 중: {row[4]}')
             name=(' ' if self.mode.get()=='space' else '\n').join(row[:4]).strip()
             try:
-                self.c.nav(MAP); time.sleep(.5)
-                res=self.c.js(SEARCH_AND_SELECT_JS.replace('__Q__',js_quote(row[4])),30) or {}
+                res=self.c.js(SEARCH_AND_SELECT_JS.replace('__Q__',js_quote(row[4])),10) or {}
                 if not res.get('ok'): raise RuntimeError(res.get('error','주소 검색 실패'))
                 self.msg(f'[{n}/{total}] 검색 결과 선택: {res.get("text","")[:100]}')
-                fav=self.c.js(CLICK_FAVORITE_JS,25) or {}
+                fav=self.c.js(CLICK_FAVORITE_JS,5) or {}
                 if not fav.get('ok'): raise RuntimeError(fav.get('error','즐겨찾기 버튼을 찾지 못했습니다.'))
-                sel=self.c.js(SELECT_GROUP_JS.replace('__GROUP__',js_quote(group_name)),25) or {}
+                sel=self.c.js(SELECT_GROUP_JS.replace('__GROUP__',js_quote(group_name)),5) or {}
                 if sel.get('duplicate'):
                     dup+=1; ow.append(row+['중복','이미 등록된 주소'])
                     self.msg(f'[{n}/{total}] 중복: {row[4]}')
                     self.c.js(CLOSE_LAYERS_JS,5); continue
                 if not sel.get('ok'): raise RuntimeError(sel.get('error','그룹 선택 실패'))
-                saved=self.c.js(SAVE_FAVORITE_JS.replace('__NAME__',js_quote(name)),25) or {}
+                saved=self.c.js(SAVE_FAVORITE_JS.replace('__NAME__',js_quote(name)),5) or {}
                 if not saved.get('ok'): raise RuntimeError(saved.get('error','즐겨찾기 저장 실패'))
                 ok+=1; ow.append(row+['성공',''])
                 self.msg(f'[{n}/{total}] 성공: {row[4]}')
