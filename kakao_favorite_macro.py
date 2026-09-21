@@ -273,7 +273,7 @@ class App:
                 fail+=1; m=str(e); ew.append(row+[m]); ow.append(row+["실패",m]); self.msg("[{}/{}] 실패: {} / {}".format(n,total,row[4],m))
                 try:self.c.nav(MAP)
                 except Exception:pass
-        ts=time.strftime("%Y%m%d_%H%M%S"); rp=RESULT/"result_{}.xlsx    def run(self,fid):
+    def run(self,fid):
         self.running=True; self.stopflag=False
         total=len(self.rows); ok=dup=fail=0
         out=Workbook(); ow=out.active
@@ -292,19 +292,14 @@ class App:
                 res=self.c.js(SEARCH_AND_SELECT_JS.replace('__Q__',js_quote(row[4])),30) or {}
                 if not res.get('ok'): raise RuntimeError(res.get('error','주소 검색 실패'))
                 self.msg(f'[{n}/{total}] 검색 결과 선택: {res.get("text","")[:100]}')
-
                 fav=self.c.js(CLICK_FAVORITE_JS,25) or {}
                 if not fav.get('ok'): raise RuntimeError(fav.get('error','즐겨찾기 버튼을 찾지 못했습니다.'))
-
                 sel=self.c.js(SELECT_GROUP_JS.replace('__GROUP__',js_quote(group_name)),25) or {}
                 if sel.get('duplicate'):
-                    dup+=1
-                    ow.append(row+['중복','이미 등록된 주소'])
+                    dup+=1; ow.append(row+['중복','이미 등록된 주소'])
                     self.msg(f'[{n}/{total}] 중복: {row[4]}')
-                    self.c.js(CLOSE_LAYERS_JS,5)
-                    continue
+                    self.c.js(CLOSE_LAYERS_JS,5); continue
                 if not sel.get('ok'): raise RuntimeError(sel.get('error','그룹 선택 실패'))
-
                 saved=self.c.js(SAVE_FAVORITE_JS.replace('__NAME__',js_quote(name)),25) or {}
                 if not saved.get('ok'): raise RuntimeError(saved.get('error','즐겨찾기 저장 실패'))
                 ok+=1; ow.append(row+['성공',''])
@@ -323,3 +318,6 @@ class App:
         self.msg(f'완료. 결과: {rp}'); self.msg(f'실패목록: {ep}')
         self.root.after(0,lambda:messagebox.showinfo('작업 완료',
             f'성공 {ok}건 / 중복 {dup}건 / 실패 {fail}건\n\n결과: {rp}\n실패목록: {ep}'))
+
+if __name__=='__main__':
+    root=tk.Tk(); App(root); root.mainloop()
