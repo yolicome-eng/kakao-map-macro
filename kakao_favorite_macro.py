@@ -229,8 +229,9 @@ class App:
             name=("\n" if self.mode.get()=="line" else " ").join(row[:4])
             try:
                 res=self.c.js(SEARCH.replace("__Q__",json.dumps(row[4],ensure_ascii=False)),25) or {}
+                if res.get("error"): raise RuntimeError("주소 검색 오류: {}".format(res.get("error")))
                 items=res.get("items",[])
-                if not items: raise RuntimeError("검색 결과가 없습니다.")
+                if not items: raise RuntimeError("검색 결과가 없습니다: {}".format(row[4]))
                 t=items[0]
                 for x in items:
                     if row[4].replace(" ","") in x.get("txt","").replace(" ",""): t=x; break
@@ -241,9 +242,11 @@ class App:
                         if q:t["lng"]=q["x"];t["lat"]=q["y"]
                         self.c.nav(MAP);time.sleep(.5)
                 if not t.get("lat") or not t.get("lng"): raise RuntimeError("검색 결과 좌표를 확인하지 못했습니다.")
+                self.msg("[{}/{}] 검색 성공: {} / 좌표 X={}, Y={}".format(n,total,row[4],t["lng"],t["lat"]))
                 obj=json.dumps({"display1":t.get("addr") or row[4],"x":t["lng"],"y":t["lat"],"folderId":fid,"memo":name},ensure_ascii=False)
                 a=self.c.js(ADD.replace("__O__",obj),20) or {}
-                if int(a.get("http",0)) not in (200,201): raise RuntimeError("즐겨찾기 저장 HTTP {}".format(a.get("http")))
+                if int(a.get("http",0)) not in (200,201): raise RuntimeError("즐겨찾기 저장 HTTP {} / {}".format(a.get("http"),str(a.get("text",""))[:300]))
+                self.msg("[{}/{}] 즐겨찾기 등록 확인: HTTP {}".format(n,total,a.get("http")))
                 ok+=1; ow.append(row+["성공",""]); self.msg("[{}/{}] 성공: {}".format(n,total,row[4]))
             except Exception as e:
                 fail+=1; m=str(e); ew.append(row+[m]); ow.append(row+["실패",m]); self.msg("[{}/{}] 실패: {} / {}".format(n,total,row[4],m))
