@@ -91,151 +91,93 @@ def start():
         except Exception: pass
     raise RuntimeError("Chrome 연결에 실패했습니다. Chrome을 모두 종료한 후 다시 시도하세요.")
 
-KAKAO_SEARCH_URL = "https://m.map.kakao.com/actions/searchView"
-KAKAO_PANEL_URL = "https://place-api.map.kakao.com/places/panel3/"
 
-KAKAO_BROWSER_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "ko,en-US;q=0.9,en;q=0.8",
-}
-KAKAO_PANEL_HEADERS = {
-    **KAKAO_BROWSER_HEADERS,
-    "Accept": "application/json, text/plain, */*",
-    "Origin": "https://place.map.kakao.com",
-    "Referer": "https://place.map.kakao.com/",
-    "appVersion": "6.6.0",
-    "pf": "PC",
-}
+def js_quote(value):
+    return json.dumps(str(value), ensure_ascii=False)
 
-def _norm(v):
-    return re.sub(r"[^0-9A-Za-z가-힣]+", "", str(v or "")).lower()
+# Visible KakaoMap UI automation. This avoids the unstable mobile/internal
+# search and coordinate endpoints used by the previous FIX3 build.
+SEARCH_AND_SELECT_JS = r'''(async function(q){
+ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+ const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
+ const norm=s=>clean(s).replace(/[^0-9A-Za-z가-힣]/g,'').toLowerCase();
+ const input=document.querySelector('#search\\.keyword\\.query');
+ if(!input) return {ok:false,error:'카카오맵 검색창을 찾지 못했습니다.'};
+ input.focus(); input.value=q;
+ input.dispatchEvent(new Event('input',{bubbles:true}));
+ input.dispatchEvent(new Event('change',{bubbles:true}));
+ const btn=document.querySelector('#search\\.keyword\\.submit');
+ if(btn) btn.click();
+ else input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
+ await sleep(1200);
+ let items=[];
+ for(let i=0;i<25;i++){
+   items=[...document.querySelectorAll('.AddressItem')];
+   if(!items.length) items=[...document.querySelectorAll('#info\\.search\\.place\\.list .AddressItem')];
+   if(items.length) break;
+   await sleep(300);
+ }
+ if(!items.length) return {ok:false,error:'주소 검색 결과가 없습니다.'};
+ const nq=norm(q); let best=null,bestScore=-1;
+ items.forEach((el,i)=>{
+   const txt=clean(el.innerText||''), n=norm(txt); let score=0;
+   if(n===nq) score+=1000;
+   if(nq&&n.includes(nq)) score+=500;
+   if(nq&&nq.includes(n)) score+=250;
+   if(el.querySelector('.txt_address,.address')) score+=20;
+   if(score>bestScore){bestScore=score;best={el,i,txt};}
+ });
+ if(!best) best={el:items[0],i:0,txt:items[0].innerText||''};
+ best.el.scrollIntoView({block:'center'}); best.el.click(); await sleep(900);
+ return {ok:true,text:clean(best.txt),index:best.i};
+})(__Q__)'''
 
-def _strip_bl(v):
-    return re.sub(r"\s+(?:BL|BLK)$", "", str(v or "").strip(), flags=re.I)
+CLICK_FAVORITE_JS = r'''(async function(){
+ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+ for(let i=0;i<30;i++){
+   const toolbar=document.querySelector('.InfoWindowToolbar');
+   const fav=toolbar?toolbar.querySelector('.fav'):document.querySelector('.InfoWindowToolbar .fav');
+   if(fav){fav.scrollIntoView({block:'center'});fav.click();await sleep(700);return {ok:true};}
+   await sleep(300);
+ }
+ return {ok:false,error:'검색한 주소의 즐겨찾기 버튼을 찾지 못했습니다.'};
+})()'''
 
-def _decode_html(v):
-    return html.unescape(re.sub(r"<[^>]+>", " ", str(v or ""))).replace("&nbsp;", " ").strip()
+SELECT_GROUP_JS = r'''(async function(group){
+ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+ const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
+ for(let i=0;i<30;i++){
+   const body=clean(document.body.innerText||'');
+   if(body.includes('이미 등록된 주소')) return {ok:true,duplicate:true};
+   const strongs=[...document.querySelectorAll('strong.txt_folder')];
+   const target=strongs.find(el=>clean(el.innerText)===clean(group));
+   if(target){const a=target.closest('a')||target.parentElement;if(a){a.scrollIntoView({block:'center'});a.click();await sleep(500);return {ok:true};}}
+   const folders=[...document.querySelectorAll('.list_folder')];
+   const textTarget=folders.find(el=>clean(el.innerText).includes(clean(group)));
+   if(textTarget){textTarget.click();await sleep(500);return {ok:true};}
+   await sleep(300);
+ }
+ return {ok:false,error:'선택한 즐겨찾기 그룹을 찾지 못했습니다.'};
+})(__GROUP__)'''
 
-def _search_candidates(text):
-    items = []
-    pattern = re.compile(r'<li\s+class="search_item\s+base"([\s\S]*?)</li>', re.I)
-    for m in pattern.finditer(text or ""):
-        frag = m.group(1)
-        mid = re.search(r'data-id="([^"]+)"', frag, re.I)
-        title = re.search(r'data-title="([^"]*)"', frag, re.I)
-        if not mid:
-            continue
-        cid = html.unescape(mid.group(1)).strip()
-        name = html.unescape(title.group(1)).strip() if title else ""
-        if not name:
-            mt = re.search(r'<[^>]+class="[^"]*tit_g[^"]*"[^>]*>([\s\S]*?)</', frag, re.I)
-            name = _decode_html(mt.group(1)) if mt else ""
-        spans = [_decode_html(x) for x in re.findall(r'<span class="txt_g">([\s\S]*?)</span>', frag, re.I)]
-        address = spans[-1] if spans else ""
-        if cid:
-            items.append({"id": cid, "name": name, "address": address})
-    return items
+SAVE_FAVORITE_JS = r'''(async function(name){
+ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+ for(let i=0;i<25;i++){
+   const input=document.querySelector('#display1');
+   if(input){
+     const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;
+     input.focus(); if(setter) setter.call(input,name); else input.value=name;
+     input.dispatchEvent(new Event('input',{bubbles:true}));
+     input.dispatchEvent(new Event('change',{bubbles:true}));
+     const ok=[...document.querySelectorAll('button')].find(b=>b.getAttribute('data-id')==='addOK'&&b.classList.contains('btn_submit'));
+     if(ok){ok.click();await sleep(700);return {ok:true};}
+   }
+   await sleep(300);
+ }
+ return {ok:false,error:'즐겨찾기 저장 창을 찾지 못했습니다.'};
+})(__NAME__)'''
 
-def _panel_point(obj):
-    if isinstance(obj, dict):
-        summary = obj.get("summary")
-        if isinstance(summary, dict):
-            point = summary.get("point")
-            if isinstance(point, dict):
-                lat, lon = point.get("lat"), point.get("lon")
-                if lat not in (None, "") and lon not in (None, ""):
-                    return str(lat), str(lon), summary
-        for v in obj.values():
-            found = _panel_point(v)
-            if found:
-                return found
-    elif isinstance(obj, list):
-        for v in obj:
-            found = _panel_point(v)
-            if found:
-                return found
-    return None
-
-def search_address(address):
-    query = str(address or "").strip()
-    variants = []
-    for q in (query, _strip_bl(query), re.sub(r"\s+", " ", _strip_bl(query))):
-        q = q.strip()
-        if q and q not in variants:
-            variants.append(q)
-
-    last_error = None
-    for q in variants:
-        try:
-            url = KAKAO_SEARCH_URL + "?" + urllib.parse.urlencode({"q": q})
-            req = urllib.request.Request(url, headers=KAKAO_BROWSER_HEADERS)
-            with urllib.request.urlopen(req, timeout=12) as r:
-                text = r.read().decode("utf-8", "ignore")
-            candidates = _search_candidates(text)
-            if not candidates:
-                continue
-
-            nq = _norm(_strip_bl(q))
-            def score(item):
-                a = _norm(_strip_bl(item.get("address", "")))
-                n = _norm(item.get("name", ""))
-                score = 0
-                if a == nq: score += 2000
-                if nq and (nq in a or a in nq): score += 1200
-                if nq and nq in n: score += 300
-                return score
-
-            candidates.sort(key=score, reverse=True)
-
-            for item in candidates[:8]:
-                pid = item.get("id")
-                if not pid:
-                    continue
-                try:
-                    preq = urllib.request.Request(
-                        KAKAO_PANEL_URL + urllib.parse.quote(str(pid), safe=""),
-                        headers=KAKAO_PANEL_HEADERS
-                    )
-                    with urllib.request.urlopen(preq, timeout=12) as r:
-                        panel = json.loads(r.read().decode("utf-8", "ignore"))
-                    point = _panel_point(panel)
-                    if point:
-                        lat, lon, summary = point
-                        address_name = ""
-                        road_name = ""
-                        if isinstance(summary, dict):
-                            sa = summary.get("address")
-                            if isinstance(sa, dict):
-                                address_name = str(sa.get("disp") or sa.get("address_name") or "")
-                            ra = summary.get("road_address")
-                            if isinstance(ra, dict):
-                                road_name = str(ra.get("address_name") or "")
-                        return {
-                            "ok": True,
-                            "addr": address_name or item.get("address") or query,
-                            "road": road_name,
-                            "lat": lat,
-                            "lng": lon,
-                            "id": str(pid),
-                        }
-                except Exception as e:
-                    last_error = e
-                    continue
-        except Exception as e:
-            last_error = e
-            continue
-
-    if last_error:
-        return {"ok": False, "error": "카카오맵 주소검색 통신 오류: {}".format(last_error)}
-    return {"ok": True, "items": []}
-
-FOLDERS = "fetch('/folder/list.json?sort=CREATE_AT').then(r=>r.json()).then(x=>x.result||[]).catch(e=>[])"
-ADD = r"""(async function(o){
-const body=JSON.stringify([{type:'address',key:'N3'+Math.floor(1000000+Math.random()*9000000),display1:o.display1,display2:'',x:Math.round(Number(o.x)),y:Math.round(Number(o.y)),color:'01',folderId:String(o.folderId),memo:o.memo}]);
-const r=await fetch('/favorite/add.json',{method:'POST',headers:{'Content-Type':'application/json'},body:body});
-return {http:r.status,text:await r.text()};
-})(__O__)"""
+CLOSE_LAYERS_JS = r'''(()=>{[...document.querySelectorAll('.dimmedLayer')].forEach(e=>{try{e.remove()}catch(_){}});return true})()'''
 
 class App:
     def __init__(self,root):
@@ -331,8 +273,53 @@ class App:
                 fail+=1; m=str(e); ew.append(row+[m]); ow.append(row+["실패",m]); self.msg("[{}/{}] 실패: {} / {}".format(n,total,row[4],m))
                 try:self.c.nav(MAP)
                 except Exception:pass
-        ts=time.strftime("%Y%m%d_%H%M%S"); rp=RESULT/"result_{}.xlsx".format(ts); ep=ERROR/"error_{}.xlsx".format(ts)
-        out.save(rp); er.save(ep); self.running=False; self.status.set("완료: 성공 {} / 실패 {}".format(ok,fail))
-        self.r.after(0,lambda:messagebox.showinfo("작업 완료","성공 {}건 / 실패 {}건\n\n결과: {}\n실패목록: {}".format(ok,fail,rp,ep)))
-if __name__=="__main__":
-    root=tk.Tk(); App(root); root.mainloop()
+        ts=time.strftime("%Y%m%d_%H%M%S"); rp=RESULT/"result_{}.xlsx    def run(self,fid):
+        self.running=True; self.stopflag=False
+        total=len(self.rows); ok=dup=fail=0
+        out=Workbook(); ow=out.active
+        ow.append(['순번','선로명','선로번호','전산화번호','주소','상태','비고'])
+        er=Workbook(); ew=er.active
+        ew.append(['순번','선로명','선로번호','전산화번호','주소','오류'])
+        group_name=self.combo.get().split(' [ID ')[0].strip()
+
+        for n,row in enumerate(self.rows,1):
+            if self.stopflag: break
+            self.pb.config(value=n/total*100)
+            self.status.set(f'{n}/{total} 처리 중: {row[4]}')
+            name=(' ' if self.mode.get()=='space' else '\n').join(row[:4]).strip()
+            try:
+                self.c.nav(MAP); time.sleep(.5)
+                res=self.c.js(SEARCH_AND_SELECT_JS.replace('__Q__',js_quote(row[4])),30) or {}
+                if not res.get('ok'): raise RuntimeError(res.get('error','주소 검색 실패'))
+                self.msg(f'[{n}/{total}] 검색 결과 선택: {res.get("text","")[:100]}')
+
+                fav=self.c.js(CLICK_FAVORITE_JS,25) or {}
+                if not fav.get('ok'): raise RuntimeError(fav.get('error','즐겨찾기 버튼을 찾지 못했습니다.'))
+
+                sel=self.c.js(SELECT_GROUP_JS.replace('__GROUP__',js_quote(group_name)),25) or {}
+                if sel.get('duplicate'):
+                    dup+=1
+                    ow.append(row+['중복','이미 등록된 주소'])
+                    self.msg(f'[{n}/{total}] 중복: {row[4]}')
+                    self.c.js(CLOSE_LAYERS_JS,5)
+                    continue
+                if not sel.get('ok'): raise RuntimeError(sel.get('error','그룹 선택 실패'))
+
+                saved=self.c.js(SAVE_FAVORITE_JS.replace('__NAME__',js_quote(name)),25) or {}
+                if not saved.get('ok'): raise RuntimeError(saved.get('error','즐겨찾기 저장 실패'))
+                ok+=1; ow.append(row+['성공',''])
+                self.msg(f'[{n}/{total}] 성공: {row[4]}')
+            except Exception as e:
+                fail+=1; msg=str(e)
+                ew.append(row+[msg]); ow.append(row+['실패',msg])
+                self.msg(f'[{n}/{total}] 실패: {row[4]} / {msg}')
+                try:self.c.js(CLOSE_LAYERS_JS,5)
+                except Exception:pass
+
+        ts=time.strftime('%Y%m%d_%H%M%S')
+        rp=RESULT/f'result_{ts}.xlsx'; ep=ERROR/f'error_{ts}.xlsx'
+        out.save(rp); er.save(ep)
+        self.running=False; self.status.set(f'완료: 성공 {ok} / 중복 {dup} / 실패 {fail}')
+        self.msg(f'완료. 결과: {rp}'); self.msg(f'실패목록: {ep}')
+        self.root.after(0,lambda:messagebox.showinfo('작업 완료',
+            f'성공 {ok}건 / 중복 {dup}건 / 실패 {fail}건\n\n결과: {rp}\n실패목록: {ep}'))
