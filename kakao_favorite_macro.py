@@ -177,6 +177,8 @@ SAVE_FAVORITE_JS = r'''(async function(name){
  return {ok:false,error:'즐겨찾기 저장 창을 찾지 못했습니다.'};
 })(__NAME__)'''
 
+FOLDERS = r'''fetch("/folder/list.json?sort=CREATE_AT").then(r=>r.json()).then(x=>x.result||x.folders||[]).catch(e=>[])'''
+
 CLOSE_LAYERS_JS = r'''(()=>{[...document.querySelectorAll('.dimmedLayer')].forEach(e=>{try{e.remove()}catch(_){}});return true})()'''
 
 class App:
@@ -249,31 +251,6 @@ class App:
         fid=str(self.folders[self.combo.current()].get("folderId"))
         threading.Thread(target=self.run,args=(fid,),daemon=True).start()
     def run(self,fid):
-        self.running=True; self.stopflag=False; ok=fail=0; total=len(self.rows)
-        out=Workbook(); ow=out.active; ow.append(["순번","선로명","선로번호","전산화번호","주소","상태","비고"])
-        er=Workbook(); ew=er.active; ew.append(["순번","선로명","선로번호","전산화번호","주소","오류"])
-        for n,row in enumerate(self.rows,1):
-            if self.stopflag: break
-            self.pb.config(value=n/total*100); self.status.set("{}/{} 처리 중: {}".format(n,total,row[4]))
-            name=("\n" if self.mode.get()=="line" else " ").join(row[:4])
-            try:
-                res=search_address(row[4])
-                if res.get("error"): raise RuntimeError(res.get("error"))
-                if not res.get("ok"): raise RuntimeError("주소 검색에 실패했습니다.")
-                if not res.get("lat") or not res.get("lng"): raise RuntimeError("카카오맵에서 주소 결과를 찾지 못했습니다: {}".format(row[4]))
-                t=res
-                if not t.get("lat") or not t.get("lng"): raise RuntimeError("카카오맵에서 주소 좌표를 확인하지 못했습니다.")
-                self.msg("[{}/{}] 검색 성공: {} / 좌표 X={}, Y={}".format(n,total,row[4],t["lng"],t["lat"]))
-                obj=json.dumps({"display1":t.get("addr") or row[4],"x":t["lng"],"y":t["lat"],"folderId":fid,"memo":name},ensure_ascii=False)
-                a=self.c.js(ADD.replace("__O__",obj),20) or {}
-                if int(a.get("http",0)) not in (200,201): raise RuntimeError("즐겨찾기 저장 HTTP {} / {}".format(a.get("http"),str(a.get("text",""))[:300]))
-                self.msg("[{}/{}] 즐겨찾기 등록 확인: HTTP {}".format(n,total,a.get("http")))
-                ok+=1; ow.append(row+["성공",""]); self.msg("[{}/{}] 성공: {}".format(n,total,row[4]))
-            except Exception as e:
-                fail+=1; m=str(e); ew.append(row+[m]); ow.append(row+["실패",m]); self.msg("[{}/{}] 실패: {} / {}".format(n,total,row[4],m))
-                try:self.c.nav(MAP)
-                except Exception:pass
-    def run(self,fid):
         self.running=True; self.stopflag=False
         total=len(self.rows); ok=dup=fail=0
         out=Workbook(); ow=out.active
@@ -316,7 +293,7 @@ class App:
         out.save(rp); er.save(ep)
         self.running=False; self.status.set(f'완료: 성공 {ok} / 중복 {dup} / 실패 {fail}')
         self.msg(f'완료. 결과: {rp}'); self.msg(f'실패목록: {ep}')
-        self.root.after(0,lambda:messagebox.showinfo('작업 완료',
+        self.r.after(0,lambda:messagebox.showinfo('작업 완료',
             f'성공 {ok}건 / 중복 {dup}건 / 실패 {fail}건\n\n결과: {rp}\n실패목록: {ep}'))
 
 if __name__=='__main__':
