@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
-import os, json, time, threading, subprocess, shutil, socket, struct, base64, urllib.request, urllib.parse
+import os, json, time, threading, subprocess, shutil, socket, struct, base64, re, html, urllib.request, urllib.parse
 from openpyxl import load_workbook, Workbook
 
 APP = Path(os.environ.get("APPDATA", str(Path.home()))) / "KakaoFavoriteMacro"
@@ -91,96 +91,144 @@ def start():
         except Exception: pass
     raise RuntimeError("Chrome 연결에 실패했습니다. Chrome을 모두 종료한 후 다시 시도하세요.")
 
-SEARCH = r"""(function(q){
-return new Promise(function(resolve){
-  function run(){
-    if(!window.kakao || !kakao.maps || !kakao.maps.services){
-      resolve({ok:false,error:'카카오 지도 주소검색 서비스 로딩에 실패했습니다.'});
-      return;
-    }
-    const geocoder = new kakao.maps.services.Geocoder();
-    const queries = [];
-    const add = function(v){
-      v=(v||'').trim();
-      if(v && queries.indexOf(v)<0) queries.push(v);
-    };
-    add(q);
-    add(q.replace(/\\s+(?:BL|BLK)$/i,'').trim());
-    add(q.replace(/\\s+/g,' ').trim());
-    let idx=0;
-    const next=function(){
-      if(idx>=queries.length){
-        resolve({ok:true,items:[]});
-        return;
-      }
-      const query=queries[idx++];
-      try{
-        geocoder.addressSearch(query,function(result,status){
-          if(status===kakao.maps.services.Status.OK && result && result.length){
-            const r=result[0];
-            const addr=(r.address && r.address.address_name) || r.address_name || '';
-            const road=(r.road_address && r.road_address.address_name) || '';
-            resolve({ok:true,items:[{
-              i:0,addr:addr || road || query,road:road,
-              lat:r.y || '',lng:r.x || '',href:'',
-              txt:[addr,road].filter(Boolean).join(' | ')
-            }]});
-          }else next();
-        },{analyze_type:kakao.maps.services.AnalyzeType.SIMILAR});
-      }catch(e){ next(); }
-    };
-    next();
-  }
+KAKAO_SEARCH_URL = "https://m.map.kakao.com/actions/searchView"
+KAKAO_PANEL_URL = "https://place-api.map.kakao.com/places/panel3/"
 
-  if(window.kakao && kakao.maps && kakao.maps.services){
-    run();
-    return;
-  }
+KAKAO_BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ko,en-US;q=0.9,en;q=0.8",
+}
+KAKAO_PANEL_HEADERS = {
+    **KAKAO_BROWSER_HEADERS,
+    "Accept": "application/json, text/plain, */*",
+    "Origin": "https://place.map.kakao.com",
+    "Referer": "https://place.map.kakao.com/",
+    "appVersion": "6.6.0",
+    "pf": "PC",
+}
 
-  var src='';
-  var scripts=document.getElementsByTagName('script');
-  for(var i=0;i<scripts.length;i++){
-    var s=scripts[i].src||'';
-    if(s.indexOf('dapi.kakao.com/v2/maps/sdk.js')>=0){
-      src=s; break;
-    }
-  }
+def _norm(v):
+    return re.sub(r"[^0-9A-Za-z가-힣]+", "", str(v or "")).lower()
 
-  if(!src){
-    resolve({ok:false,error:'카카오 지도 SDK 주소를 찾지 못했습니다.'});
-    return;
-  }
+def _strip_bl(v):
+    return re.sub(r"\s+(?:BL|BLK)$", "", str(v or "").strip(), flags=re.I)
 
-  try{
-    var u=new URL(src);
-    var key=u.searchParams.get('appkey');
-    if(!key){
-      resolve({ok:false,error:'카카오 지도 SDK의 appkey를 찾지 못했습니다.'});
-      return;
-    }
+def _decode_html(v):
+    return html.unescape(re.sub(r"<[^>]+>", " ", str(v or ""))).replace("&nbsp;", " ").strip()
 
-    var tag=document.createElement('script');
-    tag.src='https://dapi.kakao.com/v2/maps/sdk.js?appkey='+encodeURIComponent(key)+'&libraries=services';
-    tag.onload=function(){
-      var wait=0;
-      var check=function(){
-        if(window.kakao && kakao.maps && kakao.maps.services){
-          run();
-        }else if(wait++<40){
-          setTimeout(check,250);
-        }else{
-          resolve({ok:false,error:'카카오 지도 주소검색 서비스가 로딩되지 않았습니다.'});
-        }
-      };
-      check();
-    };
-    tag.onerror=function(){resolve({ok:false,error:'카카오 지도 주소검색 서비스 스크립트를 불러오지 못했습니다.'});};
-    document.head.appendChild(tag);
-  }catch(e){
-    resolve({ok:false,error:'주소검색 서비스 준비 오류: '+e.message});
-  }
-});
-})(__Q__)"""
+def _search_candidates(text):
+    items = []
+    pattern = re.compile(r'<li\s+class="search_item\s+base"([\s\S]*?)</li>', re.I)
+    for m in pattern.finditer(text or ""):
+        frag = m.group(1)
+        mid = re.search(r'data-id="([^"]+)"', frag, re.I)
+        title = re.search(r'data-title="([^"]*)"', frag, re.I)
+        if not mid:
+            continue
+        cid = html.unescape(mid.group(1)).strip()
+        name = html.unescape(title.group(1)).strip() if title else ""
+        if not name:
+            mt = re.search(r'<[^>]+class="[^"]*tit_g[^"]*"[^>]*>([\s\S]*?)</', frag, re.I)
+            name = _decode_html(mt.group(1)) if mt else ""
+        spans = [_decode_html(x) for x in re.findall(r'<span class="txt_g">([\s\S]*?)</span>', frag, re.I)]
+        address = spans[-1] if spans else ""
+        if cid:
+            items.append({"id": cid, "name": name, "address": address})
+    return items
+
+def _panel_point(obj):
+    if isinstance(obj, dict):
+        summary = obj.get("summary")
+        if isinstance(summary, dict):
+            point = summary.get("point")
+            if isinstance(point, dict):
+                lat, lon = point.get("lat"), point.get("lon")
+                if lat not in (None, "") and lon not in (None, ""):
+                    return str(lat), str(lon), summary
+        for v in obj.values():
+            found = _panel_point(v)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for v in obj:
+            found = _panel_point(v)
+            if found:
+                return found
+    return None
+
+def search_address(address):
+    query = str(address or "").strip()
+    variants = []
+    for q in (query, _strip_bl(query), re.sub(r"\s+", " ", _strip_bl(query))):
+        q = q.strip()
+        if q and q not in variants:
+            variants.append(q)
+
+    last_error = None
+    for q in variants:
+        try:
+            url = KAKAO_SEARCH_URL + "?" + urllib.parse.urlencode({"q": q})
+            req = urllib.request.Request(url, headers=KAKAO_BROWSER_HEADERS)
+            with urllib.request.urlopen(req, timeout=12) as r:
+                text = r.read().decode("utf-8", "ignore")
+            candidates = _search_candidates(text)
+            if not candidates:
+                continue
+
+            nq = _norm(_strip_bl(q))
+            def score(item):
+                a = _norm(_strip_bl(item.get("address", "")))
+                n = _norm(item.get("name", ""))
+                score = 0
+                if a == nq: score += 2000
+                if nq and (nq in a or a in nq): score += 1200
+                if nq and nq in n: score += 300
+                return score
+
+            candidates.sort(key=score, reverse=True)
+
+            for item in candidates[:8]:
+                pid = item.get("id")
+                if not pid:
+                    continue
+                try:
+                    preq = urllib.request.Request(
+                        KAKAO_PANEL_URL + urllib.parse.quote(str(pid), safe=""),
+                        headers=KAKAO_PANEL_HEADERS
+                    )
+                    with urllib.request.urlopen(preq, timeout=12) as r:
+                        panel = json.loads(r.read().decode("utf-8", "ignore"))
+                    point = _panel_point(panel)
+                    if point:
+                        lat, lon, summary = point
+                        address_name = ""
+                        road_name = ""
+                        if isinstance(summary, dict):
+                            sa = summary.get("address")
+                            if isinstance(sa, dict):
+                                address_name = str(sa.get("disp") or sa.get("address_name") or "")
+                            ra = summary.get("road_address")
+                            if isinstance(ra, dict):
+                                road_name = str(ra.get("address_name") or "")
+                        return {
+                            "ok": True,
+                            "addr": address_name or item.get("address") or query,
+                            "road": road_name,
+                            "lat": lat,
+                            "lng": lon,
+                            "id": str(pid),
+                        }
+                except Exception as e:
+                    last_error = e
+                    continue
+        except Exception as e:
+            last_error = e
+            continue
+
+    if last_error:
+        return {"ok": False, "error": "카카오맵 주소검색 통신 오류: {}".format(last_error)}
+    return {"ok": True, "items": []}
 
 FOLDERS = "fetch('/folder/list.json?sort=CREATE_AT').then(r=>r.json()).then(x=>x.result||[]).catch(e=>[])"
 ADD = r"""(async function(o){
@@ -267,20 +315,12 @@ class App:
             self.pb.config(value=n/total*100); self.status.set("{}/{} 처리 중: {}".format(n,total,row[4]))
             name=("\n" if self.mode.get()=="line" else " ").join(row[:4])
             try:
-                res=self.c.js(SEARCH.replace("__Q__",json.dumps(row[4],ensure_ascii=False)),25) or {}
-                if res.get("error"): raise RuntimeError("주소 검색 오류: {}".format(res.get("error")))
-                items=res.get("items",[])
-                if not items: raise RuntimeError("검색 결과가 없습니다: {}".format(row[4]))
-                t=items[0]
-                for x in items:
-                    if row[4].replace(" ","") in x.get("txt","").replace(" ",""): t=x; break
-                if not t.get("lat") or not t.get("lng"):
-                    if t.get("href"):
-                        self.c.nav(t["href"]); time.sleep(1)
-                        q=self.c.js("(()=>{let s=document.body.innerText||'';let m=s.match(/(-?\\d+\\.\\d+)\\s*,\\s*(-?\\d+\\.\\d+)/);return m?{x:m[1],y:m[2]}:null})()")
-                        if q:t["lng"]=q["x"];t["lat"]=q["y"]
-                        self.c.nav(MAP);time.sleep(.5)
-                if not t.get("lat") or not t.get("lng"): raise RuntimeError("검색 결과 좌표를 확인하지 못했습니다.")
+                res=search_address(row[4])
+                if res.get("error"): raise RuntimeError(res.get("error"))
+                if not res.get("ok"): raise RuntimeError("주소 검색에 실패했습니다.")
+                if not res.get("lat") or not res.get("lng"): raise RuntimeError("카카오맵에서 주소 결과를 찾지 못했습니다: {}".format(row[4]))
+                t=res
+                if not t.get("lat") or not t.get("lng"): raise RuntimeError("카카오맵에서 주소 좌표를 확인하지 못했습니다.")
                 self.msg("[{}/{}] 검색 성공: {} / 좌표 X={}, Y={}".format(n,total,row[4],t["lng"],t["lat"]))
                 obj=json.dumps({"display1":t.get("addr") or row[4],"x":t["lng"],"y":t["lat"],"folderId":fid,"memo":name},ensure_ascii=False)
                 a=self.c.js(ADD.replace("__O__",obj),20) or {}
