@@ -1,0 +1,19 @@
+name: Build Windows EXE
+on:
+  workflow_dispatch:
+  push:
+    branches: [elecmap-address-converter]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt pyinstaller
+      - run: pyinstaller --onefile --windowed --name 전산화번호_주소찾기 main.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 전산화번호-주소찾기-Windows
+          path: dist/전산화번호_주소찾기.exe
