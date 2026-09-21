@@ -91,13 +91,56 @@ def start():
         except Exception: pass
     raise RuntimeError("Chrome 연결에 실패했습니다. Chrome을 모두 종료한 후 다시 시도하세요.")
 
-SEARCH = r"""(async function(q){
-const i=document.querySelector('#search\.keyword\.query');
-if(!i)return {ok:false,error:'검색창을 찾지 못했습니다.'};
-i.focus();i.value=q;i.dispatchEvent(new Event('input',{bubbles:true}));
-const b=document.querySelector('#search\.keyword\.submit');if(b)b.click();else i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true}));
-await new Promise(r=>setTimeout(r,1800));
-return {ok:true,items:[...document.querySelectorAll('#info\.search\.place\.list .PlaceItem,.placelist .PlaceItem')].map((e,n)=>({i:n,addr:[...e.querySelectorAll('.addr,.jibun,.road')].map(x=>x.innerText.trim()).filter(Boolean).join(' | '),lat:e.getAttribute('data-lat')||e.dataset.lat||'',lng:e.getAttribute('data-lng')||e.dataset.lng||'',href:e.querySelector('.moreview')?.href||'',txt:(e.innerText||'').slice(0,1000)}))};
+SEARCH = r"""(function(q){
+return new Promise(function(resolve){
+  if(!window.kakao || !kakao.maps || !kakao.maps.services){
+    resolve({ok:false,error:'카카오 지도 검색 서비스가 아직 준비되지 않았습니다.'});
+    return;
+  }
+  const geocoder = new kakao.maps.services.Geocoder();
+  const queries = [];
+  const add = function(v){
+    v=(v||'').trim();
+    if(v && queries.indexOf(v)<0) queries.push(v);
+  };
+  add(q);
+  add(q.replace(/\\s+(?:BL|BLK)$/i,'').trim());
+  add(q.replace(/\\s+/g,' ').trim());
+  let idx=0;
+  const next=function(){
+    if(idx>=queries.length){
+      resolve({ok:true,items:[]});
+      return;
+    }
+    const query=queries[idx++];
+    try{
+      geocoder.addressSearch(query,function(result,status){
+        if(status===kakao.maps.services.Status.OK && result && result.length){
+          const r=result[0];
+          const addr=(r.address && r.address.address_name) || r.address_name || '';
+          const road=(r.road_address && r.road_address.address_name) || '';
+          resolve({
+            ok:true,
+            items:[{
+              i:0,
+              addr:addr || road || query,
+              road:road,
+              lat:r.y || '',
+              lng:r.x || '',
+              href:'',
+              txt:[addr,road].filter(Boolean).join(' | ')
+            }]
+          });
+        }else{
+          next();
+        }
+      },{analyze_type:kakao.maps.services.AnalyzeType.SIMILAR});
+    }catch(e){
+      next();
+    }
+  };
+  next();
+});
 })(__Q__)"""
 
 FOLDERS = "fetch('/folder/list.json?sort=CREATE_AT').then(r=>r.json()).then(x=>x.result||[]).catch(e=>[])"
