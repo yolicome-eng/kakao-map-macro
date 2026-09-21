@@ -72,7 +72,10 @@ class CDP:
         r=self.call("Runtime.evaluate",{"expression":x,"awaitPromise":True,"returnByValue":True},timeout)
         return r.get("result",{}).get("value")
     def nav(self,url):
-        self.call("Page.navigate",{"url":url}); time.sleep(1)
+        self.call("Page.navigate",{"url":url},timeout=15); time.sleep(1)
+    def close(self):
+        try: self.w.s.close()
+        except Exception: pass
 
 def connect():
     for t in get_json("/json/list"):
@@ -82,7 +85,7 @@ def connect():
 def start():
     p=chrome()
     if not p: raise RuntimeError("Google Chrome을 찾지 못했습니다.")
-    subprocess.Popen([p,"--remote-debugging-port={}".format(PORT),"--user-data-dir={}".format(PROFILE),"--no-first-run","--no-default-browser-check",MAP],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    subprocess.Popen([p,"--remote-debugging-port={}".format(PORT),"--remote-debugging-address=127.0.0.1","--remote-allow-origins=*","--user-data-dir={}".format(PROFILE),"--no-first-run","--no-default-browser-check",MAP],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     for _ in range(40):
         time.sleep(.5)
         try:
@@ -260,6 +263,10 @@ class App:
 
         # 작업 시작 시 지도 페이지를 한 번만 준비합니다. 매 행마다 새로고침하지 않습니다.
         try:
+            # 이전 실행에서 끊어진 CDP 소켓을 재사용하지 않고 새 연결을 확보합니다.
+            fresh=connect()
+            if fresh: self.c=fresh
+            else: self.c=start()
             self.c.nav(MAP)
             ready=self.c.js("!!document.querySelector('#search\\.keyword\\.query')",10)
             if not ready: raise RuntimeError("카카오맵 검색창을 준비하지 못했습니다.")
