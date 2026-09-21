@@ -1,0 +1,1 @@
+Windows EXE is built automatically by GitHub Actions from build-exe.yml.
