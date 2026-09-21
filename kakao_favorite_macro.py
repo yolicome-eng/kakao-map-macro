@@ -93,53 +93,92 @@ def start():
 
 SEARCH = r"""(function(q){
 return new Promise(function(resolve){
-  if(!window.kakao || !kakao.maps || !kakao.maps.services){
-    resolve({ok:false,error:'카카오 지도 검색 서비스가 아직 준비되지 않았습니다.'});
-    return;
-  }
-  const geocoder = new kakao.maps.services.Geocoder();
-  const queries = [];
-  const add = function(v){
-    v=(v||'').trim();
-    if(v && queries.indexOf(v)<0) queries.push(v);
-  };
-  add(q);
-  add(q.replace(/\\s+(?:BL|BLK)$/i,'').trim());
-  add(q.replace(/\\s+/g,' ').trim());
-  let idx=0;
-  const next=function(){
-    if(idx>=queries.length){
-      resolve({ok:true,items:[]});
+  function run(){
+    if(!window.kakao || !kakao.maps || !kakao.maps.services){
+      resolve({ok:false,error:'카카오 지도 주소검색 서비스 로딩에 실패했습니다.'});
       return;
     }
-    const query=queries[idx++];
-    try{
-      geocoder.addressSearch(query,function(result,status){
-        if(status===kakao.maps.services.Status.OK && result && result.length){
-          const r=result[0];
-          const addr=(r.address && r.address.address_name) || r.address_name || '';
-          const road=(r.road_address && r.road_address.address_name) || '';
-          resolve({
-            ok:true,
-            items:[{
-              i:0,
-              addr:addr || road || query,
-              road:road,
-              lat:r.y || '',
-              lng:r.x || '',
-              href:'',
+    const geocoder = new kakao.maps.services.Geocoder();
+    const queries = [];
+    const add = function(v){
+      v=(v||'').trim();
+      if(v && queries.indexOf(v)<0) queries.push(v);
+    };
+    add(q);
+    add(q.replace(/\\s+(?:BL|BLK)$/i,'').trim());
+    add(q.replace(/\\s+/g,' ').trim());
+    let idx=0;
+    const next=function(){
+      if(idx>=queries.length){
+        resolve({ok:true,items:[]});
+        return;
+      }
+      const query=queries[idx++];
+      try{
+        geocoder.addressSearch(query,function(result,status){
+          if(status===kakao.maps.services.Status.OK && result && result.length){
+            const r=result[0];
+            const addr=(r.address && r.address.address_name) || r.address_name || '';
+            const road=(r.road_address && r.road_address.address_name) || '';
+            resolve({ok:true,items:[{
+              i:0,addr:addr || road || query,road:road,
+              lat:r.y || '',lng:r.x || '',href:'',
               txt:[addr,road].filter(Boolean).join(' | ')
-            }]
-          });
-        }else{
-          next();
-        }
-      },{analyze_type:kakao.maps.services.AnalyzeType.SIMILAR});
-    }catch(e){
-      next();
+            }]});
+          }else next();
+        },{analyze_type:kakao.maps.services.AnalyzeType.SIMILAR});
+      }catch(e){ next(); }
+    };
+    next();
+  }
+
+  if(window.kakao && kakao.maps && kakao.maps.services){
+    run();
+    return;
+  }
+
+  var src='';
+  var scripts=document.getElementsByTagName('script');
+  for(var i=0;i<scripts.length;i++){
+    var s=scripts[i].src||'';
+    if(s.indexOf('dapi.kakao.com/v2/maps/sdk.js')>=0){
+      src=s; break;
     }
-  };
-  next();
+  }
+
+  if(!src){
+    resolve({ok:false,error:'카카오 지도 SDK 주소를 찾지 못했습니다.'});
+    return;
+  }
+
+  try{
+    var u=new URL(src);
+    var key=u.searchParams.get('appkey');
+    if(!key){
+      resolve({ok:false,error:'카카오 지도 SDK의 appkey를 찾지 못했습니다.'});
+      return;
+    }
+
+    var tag=document.createElement('script');
+    tag.src='https://dapi.kakao.com/v2/maps/sdk.js?appkey='+encodeURIComponent(key)+'&libraries=services';
+    tag.onload=function(){
+      var wait=0;
+      var check=function(){
+        if(window.kakao && kakao.maps && kakao.maps.services){
+          run();
+        }else if(wait++<40){
+          setTimeout(check,250);
+        }else{
+          resolve({ok:false,error:'카카오 지도 주소검색 서비스가 로딩되지 않았습니다.'});
+        }
+      };
+      check();
+    };
+    tag.onerror=function(){resolve({ok:false,error:'카카오 지도 주소검색 서비스 스크립트를 불러오지 못했습니다.'});};
+    document.head.appendChild(tag);
+  }catch(e){
+    resolve({ok:false,error:'주소검색 서비스 준비 오류: '+e.message});
+  }
 });
 })(__Q__)"""
 
