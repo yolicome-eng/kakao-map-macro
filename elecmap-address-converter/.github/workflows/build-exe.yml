@@ -2,7 +2,7 @@ name: Build Windows EXE
 on:
   workflow_dispatch:
   push:
-    branches: [elecmap-address-converter]
+    branches: [main, elecmap-address-converter]
   pull_request:
     branches: [main]
 jobs:
@@ -13,8 +13,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller --onefile --windowed --name 전산화번호_주소찾기 main.py
+      - run: pip install -r elecmap-address-converter/requirements.txt pyinstaller
+      - run: pyinstaller --onefile --windowed --name 전산화번호_주소찾기 elecmap-address-converter/main.py
       - uses: actions/upload-artifact@v4
         with:
           name: 전산화번호-주소찾기-Windows
