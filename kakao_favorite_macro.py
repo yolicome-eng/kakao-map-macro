@@ -104,12 +104,18 @@ SEARCH_AND_SELECT_JS = r'''(async function(q){
  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
  const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
  const norm=s=>clean(s).replace(/[^0-9A-Za-z가-힣]/g,'').toLowerCase();
- const input=document.querySelector('#search\\.keyword\\.query');
+ const input=document.querySelector('#search\\.keyword\\.query') ||
+   document.querySelector('input[name="q"]') ||
+   document.querySelector('input[placeholder*="검색"]') ||
+   document.querySelector('input[aria-label*="검색"]') ||
+   [...document.querySelectorAll('input')].find(x=>/search|keyword|검색/i.test((x.id||'')+' '+(x.className||'')+' '+(x.placeholder||'')+' '+(x.getAttribute('aria-label')||'')));
  if(!input) return {ok:false,error:'카카오맵 검색창을 찾지 못했습니다.'};
  input.focus(); input.value=q;
  input.dispatchEvent(new Event('input',{bubbles:true}));
  input.dispatchEvent(new Event('change',{bubbles:true}));
- const btn=document.querySelector('#search\\.keyword\\.submit');
+ const btn=document.querySelector('#search\\.keyword\\.submit') ||
+   document.querySelector('button[type="submit"]') ||
+   [...document.querySelectorAll('button,a')].find(x=>/검색/.test((x.innerText||'')+' '+(x.getAttribute('aria-label')||'')));
  if(btn) btn.click();
  else input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
  const deadline=Date.now()+6000;
