@@ -268,8 +268,22 @@ class App:
             if fresh: self.c=fresh
             else: self.c=start()
             self.c.nav(MAP)
-            ready=self.c.js("!!document.querySelector('#search\\.keyword\\.query')",10)
-            if not ready: raise RuntimeError("카카오맵 검색창을 준비하지 못했습니다.")
+            time.sleep(2.0)
+            ready_js=r'''(()=>({
+                url:location.href,
+                inputs:[...document.querySelectorAll('input')].map(x=>({id:x.id,cls:x.className,ph:x.placeholder,aria:x.getAttribute('aria-label')})).slice(0,30)
+            }))()'''
+            info=self.c.js(ready_js,10) or {}
+            ready=bool(self.c.js(r'''!!(
+                document.querySelector('#search\\.keyword\\.query') ||
+                document.querySelector('input[name="q"]') ||
+                document.querySelector('input[placeholder*="검색"]') ||
+                document.querySelector('input[aria-label*="검색"]') ||
+                [...document.querySelectorAll('input')].find(x=>/search|keyword|검색/i.test((x.id||'')+' '+(x.className||'')+' '+(x.placeholder||'')+' '+(x.getAttribute('aria-label')||'')))
+            )''',10))
+            if not ready:
+                self.msg("카카오맵 페이지 확인: "+str(info.get("url",""))[:120])
+                raise RuntimeError("카카오맵 검색창을 준비하지 못했습니다. Chrome에서 카카오맵 화면이 완전히 열린 뒤 다시 시도해주세요.")
         except Exception as e:
             self.running=False
             self.status.set("시작 실패")
