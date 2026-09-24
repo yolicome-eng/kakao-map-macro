@@ -14,3 +14,7 @@ Windows EXE로 실행하는 프로그램입니다.
 결과와 실패목록은 %APPDATA%\\KakaoFavoriteMacro 아래에 저장됩니다.
 
 주의: 카카오맵 화면이나 내부 동작이 변경되면 매크로를 수정해야 할 수 있습니다. 첫 실행은 소량으로 테스트하세요.
+
+
+## Test
+Address search / coordinate / favorite registration verification build.
