@@ -1,0 +1,33 @@
+name: Build Kakao v0.3 Windows EXE
+on:
+  push:
+    branches: [main]
+    paths:
+      - kakao_favorite_macro_v03.py
+      - .github/workflows/build-v03-windows.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller==6.16.0
+      - name: Check syntax
+        run: python -m py_compile kakao_favorite_macro_v03.py
+      - name: Build EXE
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name KakaoFavorite_v03_TEST kakao_favorite_macro_v03.py
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: KakaoFavorite-v03-Windows-EXE
+          path: dist/KakaoFavorite_v03_TEST.exe
+          if-no-files-found: error
