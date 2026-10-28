@@ -373,7 +373,10 @@ class App:
                 if not saved.get('ok'): raise RuntimeError(saved.get('error','즐겨찾기 저장 실패'))
                 seen_places.add(key)
                 ok+=1
-                check=self.c.js(VERIFY_FAVORITE_JS.replace('__NAME__',js_quote(name)),15) or {}
+                try:
+                    check=self.c.js(VERIFY_FAVORITE_JS.replace('__NAME__',js_quote(name)),15) or {}
+                except Exception as verify_error:
+                    check={'verified':False,'detail':'검증 중 오류: '+str(verify_error)}
                 if check.get('verified'):
                     confirmed+=1
                     ow.append(row+['저장 화면 확인',check.get('detail','')])
